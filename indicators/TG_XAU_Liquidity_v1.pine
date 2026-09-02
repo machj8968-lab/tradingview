@@ -1,0 +1,111 @@
+//@version=6
+indicator("TG XAU 流動性 v1", shorttitle = "TG XAU Liquidity", overlay = true, max_lines_count = 100, max_labels_count = 100)
+
+string GROUP_CORE = "核心"
+string GROUP_DISPLAY = "顯示"
+int pivotLeft = input.int(3, "Pivot 左側確認 K 數", minval = 1, group = GROUP_CORE)
+int pivotRight = input.int(3, "Pivot 右側確認 K 數", minval = 1, group = GROUP_CORE)
+int atrLength = input.int(14, "ATR 週期", minval = 1, group = GROUP_CORE)
+float equalAtrMult = input.float(0.10, "EQH / EQL ATR 容差倍數", minval = 0.01, step = 0.01, group = GROUP_CORE)
+int maxActive = input.int(12, "最多活動流動性池", minval = 2, maxval = 40, group = GROUP_CORE)
+bool showLabels = input.bool(true, "顯示 BSL / SSL 標籤", group = GROUP_DISPLAY)
+bool deleteAfterSweep = input.bool(true, "掃過後移除", group = GROUP_DISPLAY)
+
+float atrValue = ta.atr(atrLength)
+float ph = ta.pivothigh(high, pivotLeft, pivotRight)
+float pl = ta.pivotlow(low, pivotLeft, pivotRight)
+var float lastSwingHigh = na
+var int lastSwingHighBar = na
+var float lastSwingLow = na
+var int lastSwingLowBar = na
+var array<float> levels = array.new_float()
+var array<bool> isBuySide = array.new_bool()
+var array<int> createdBars = array.new_int()
+var array<line> lines = array.new_line()
+var array<label> labels = array.new_label()
+
+if barstate.isconfirmed and not na(ph)
+    float tol = nz(atrValue[pivotRight], syminfo.mintick) * equalAtrMult
+    int pivotBar = bar_index - pivotRight
+    if not na(lastSwingHigh) and math.abs(ph - lastSwingHigh) <= tol
+        float level = (ph + lastSwingHigh) / 2.0
+        bool duplicate = false
+        int n = array.size(levels)
+        if n > 0
+            for i = 0 to n - 1
+                if array.get(isBuySide, i) and math.abs(array.get(levels, i) - level) <= tol
+                    duplicate := true
+        if not duplicate
+            line l = line.new(lastSwingHighBar, level, pivotBar, level, extend = extend.right, color = color.new(color.red, 10), style = line.style_dashed, width = 1)
+            label lb = na
+            if showLabels
+                lb := label.new(pivotBar, level, "BSL｜買方流動性", style = label.style_label_left, textcolor = color.white, color = color.new(color.red, 65), size = size.tiny)
+            array.push(levels, level)
+            array.push(isBuySide, true)
+            array.push(createdBars, bar_index)
+            array.push(lines, l)
+            array.push(labels, lb)
+    lastSwingHigh := ph
+    lastSwingHighBar := pivotBar
+
+if barstate.isconfirmed and not na(pl)
+    float tol = nz(atrValue[pivotRight], syminfo.mintick) * equalAtrMult
+    int pivotBar = bar_index - pivotRight
+    if not na(lastSwingLow) and math.abs(pl - lastSwingLow) <= tol
+        float level = (pl + lastSwingLow) / 2.0
+        bool duplicate = false
+        int n = array.size(levels)
+        if n > 0
+            for i = 0 to n - 1
+                if not array.get(isBuySide, i) and math.abs(array.get(levels, i) - level) <= tol
+                    duplicate := true
+        if not duplicate
+            line l = line.new(lastSwingLowBar, level, pivotBar, level, extend = extend.right, color = color.new(color.aqua, 10), style = line.style_dashed, width = 1)
+            label lb = na
+            if showLabels
+                lb := label.new(pivotBar, level, "SSL｜賣方流動性", style = label.style_label_left, textcolor = color.white, color = color.new(color.teal, 60), size = size.tiny)
+            array.push(levels, level)
+            array.push(isBuySide, false)
+            array.push(createdBars, bar_index)
+            array.push(lines, l)
+            array.push(labels, lb)
+    lastSwingLow := pl
+    lastSwingLowBar := pivotBar
+
+if barstate.isconfirmed
+    int i = array.size(levels) - 1
+    while i >= 0
+        float level = array.get(levels, i)
+        bool buySide = array.get(isBuySide, i)
+        int created = array.get(createdBars, i)
+        bool swept = bar_index > created and (buySide ? high >= level : low <= level)
+        if swept
+            line l = array.get(lines, i)
+            label lb = array.get(labels, i)
+            if deleteAfterSweep
+                line.delete(l)
+                if not na(lb)
+                    label.delete(lb)
+            else
+                line.set_extend(l, extend.none)
+                line.set_x2(l, bar_index)
+                line.set_style(l, line.style_dotted)
+                if not na(lb)
+                    label.set_text(lb, buySide ? "BSL 已掃" : "SSL 已掃")
+                    label.set_x(lb, bar_index)
+            array.remove(levels, i)
+            array.remove(isBuySide, i)
+            array.remove(createdBars, i)
+            array.remove(lines, i)
+            array.remove(labels, i)
+        i -= 1
+
+while array.size(levels) > maxActive
+    line oldLine = array.shift(lines)
+    label oldLabel = array.shift(labels)
+    line.delete(oldLine)
+    if not na(oldLabel)
+        label.delete(oldLabel)
+    array.shift(levels)
+    array.shift(isBuySide)
+    array.shift(createdBars)
