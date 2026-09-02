@@ -5,19 +5,16 @@ on:
   pull_request:
 
 jobs:
-  test:
+  static-tests:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - name: Bias logic contract
+      - name: Bias math tests
         run: python tests/test_bias_logic.py
-
-      - name: Pine static contract
-        run: python tests/static_contract_check.py
+      - name: Indicator contracts
+        run: python tests/test_indicator_contracts.py
+      - name: Source sanity
+        run: python tests/source_sanity.py
