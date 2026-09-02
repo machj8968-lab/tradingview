@@ -1,0 +1,77 @@
+//@version=6
+indicator("TG XAU 自動斐波 v1", shorttitle = "TG XAU Auto Fib", overlay = true, max_lines_count = 50, max_labels_count = 50)
+
+string GROUP_CORE = "核心"
+string GROUP_DISPLAY = "顯示"
+int pivotLeft = input.int(5, "Pivot 左側確認 K 數", minval = 1, group = GROUP_CORE)
+int pivotRight = input.int(5, "Pivot 右側確認 K 數", minval = 1, group = GROUP_CORE)
+bool show382 = input.bool(true, "顯示 0.382", group = GROUP_DISPLAY)
+bool show500 = input.bool(true, "顯示 0.500", group = GROUP_DISPLAY)
+bool show618 = input.bool(true, "顯示 0.618", group = GROUP_DISPLAY)
+bool showAnchors = input.bool(false, "顯示 0 / 1 Anchor", group = GROUP_DISPLAY)
+bool showLabels = input.bool(true, "顯示價位標籤", group = GROUP_DISPLAY)
+
+float ph = ta.pivothigh(high, pivotLeft, pivotRight)
+float pl = ta.pivotlow(low, pivotLeft, pivotRight)
+var float lastHigh = na
+var int lastHighBar = na
+var float lastLow = na
+var int lastLowBar = na
+bool pivotChanged = false
+
+if barstate.isconfirmed and not na(ph)
+    lastHigh := ph
+    lastHighBar := bar_index - pivotRight
+    pivotChanged := true
+if barstate.isconfirmed and not na(pl)
+    lastLow := pl
+    lastLowBar := bar_index - pivotRight
+    pivotChanged := true
+
+var array<line> fibLines = array.new_line()
+var array<label> fibLabels = array.new_label()
+
+f_clear() =>
+    int ln = array.size(fibLines)
+    if ln > 0
+        for i = 0 to ln - 1
+            line l = array.get(fibLines, i)
+            if not na(l)
+                line.delete(l)
+    int lb = array.size(fibLabels)
+    if lb > 0
+        for i = 0 to lb - 1
+            label x = array.get(fibLabels, i)
+            if not na(x)
+                label.delete(x)
+    array.clear(fibLines)
+    array.clear(fibLabels)
+
+f_addLevel(float price, int startBar, int endBar, string name, int width, color c) =>
+    line l = line.new(startBar, price, endBar, price, extend = extend.right, color = c, width = width)
+    array.push(fibLines, l)
+    if showLabels
+        label lb = label.new(endBar, price, name + "  " + str.tostring(price, format.mintick), style = label.style_label_left, textcolor = color.white, color = color.new(c, 70), size = size.tiny)
+        array.push(fibLabels, lb)
+
+if pivotChanged and not na(lastHigh) and not na(lastLow) and lastHigh > lastLow
+    f_clear()
+    bool upswing = lastHighBar > lastLowBar
+    int startBar = upswing ? lastLowBar : lastHighBar
+    int endBar = upswing ? lastHighBar : lastLowBar
+    float swingRange = lastHigh - lastLow
+    float level382 = upswing ? lastHigh - swingRange * 0.382 : lastLow + swingRange * 0.382
+    float level500 = upswing ? lastHigh - swingRange * 0.500 : lastLow + swingRange * 0.500
+    float level618 = upswing ? lastHigh - swingRange * 0.618 : lastLow + swingRange * 0.618
+    float anchor0 = upswing ? lastHigh : lastLow
+    float anchor1 = upswing ? lastLow : lastHigh
+    if showAnchors
+        f_addLevel(anchor0, startBar, endBar, "0.000", 1, color.new(color.gray, 45))
+    if show382
+        f_addLevel(level382, startBar, endBar, "0.382", 1, color.new(color.silver, 25))
+    if show500
+        f_addLevel(level500, startBar, endBar, "0.500", 1, color.new(color.yellow, 25))
+    if show618
+        f_addLevel(level618, startBar, endBar, "0.618", 2, color.new(color.orange, 15))
+    if showAnchors
+        f_addLevel(anchor1, startBar, endBar, "1.000", 1, color.new(color.gray, 45))
