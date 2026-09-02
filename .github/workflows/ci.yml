@@ -1,0 +1,23 @@
+name: TradingView Indicator Checks
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Bias logic contract
+        run: python tests/test_bias_logic.py
+
+      - name: Pine static contract
+        run: python tests/static_contract_check.py
