@@ -1,0 +1,112 @@
+//@version=6
+indicator("TG XAU FVG v1", shorttitle = "TG XAU FVG", overlay = true, max_boxes_count = 100, max_lines_count = 100)
+
+string GROUP_CORE = "核心"
+string GROUP_DISPLAY = "顯示"
+int atrLength = input.int(14, "ATR 週期", minval = 1, group = GROUP_CORE)
+float minGapAtrMult = input.float(0.10, "最小 FVG 大小 ATR 倍數", minval = 0.0, step = 0.01, group = GROUP_CORE)
+string mitigationMode = input.string("50%", "失效 / Mitigation 條件", options = ["觸碰", "50%", "完全填補"], group = GROUP_CORE)
+int maxActive = input.int(20, "最多活動 FVG", minval = 2, maxval = 50, group = GROUP_CORE)
+bool showCE = input.bool(true, "顯示 50% CE 中線", group = GROUP_DISPLAY)
+bool deleteMitigated = input.bool(true, "Mitigation 後移除", group = GROUP_DISPLAY)
+
+float atrValue = ta.atr(atrLength)
+float minGap = nz(atrValue, 0.0) * minGapAtrMult
+bool bullGapRaw = low > high[2] and (low - high[2]) >= minGap
+bool bearGapRaw = high < low[2] and (low[2] - high) >= minGap
+bool newBullFvg = barstate.isconfirmed and bullGapRaw
+bool newBearFvg = barstate.isconfirmed and bearGapRaw
+
+var array<float> tops = array.new_float()
+var array<float> bottoms = array.new_float()
+var array<bool> bullish = array.new_bool()
+var array<int> createdBars = array.new_int()
+var array<box> boxes = array.new_box()
+var array<line> ceLines = array.new_line()
+
+if newBullFvg
+    float top = low
+    float bottom = high[2]
+    float ce = (top + bottom) / 2.0
+    box b = box.new(left = bar_index - 2, top = top, right = bar_index, bottom = bottom, xloc = xloc.bar_index, extend = extend.right, bgcolor = color.new(color.teal, 87), border_color = color.new(color.teal, 55))
+    line ceLine = na
+    if showCE
+        ceLine := line.new(bar_index - 2, ce, bar_index, ce, extend = extend.right, color = color.new(color.aqua, 40), style = line.style_dotted, width = 1)
+    array.push(tops, top)
+    array.push(bottoms, bottom)
+    array.push(bullish, true)
+    array.push(createdBars, bar_index)
+    array.push(boxes, b)
+    array.push(ceLines, ceLine)
+
+if newBearFvg
+    float top = low[2]
+    float bottom = high
+    float ce = (top + bottom) / 2.0
+    box b = box.new(left = bar_index - 2, top = top, right = bar_index, bottom = bottom, xloc = xloc.bar_index, extend = extend.right, bgcolor = color.new(color.red, 88), border_color = color.new(color.red, 55))
+    line ceLine = na
+    if showCE
+        ceLine := line.new(bar_index - 2, ce, bar_index, ce, extend = extend.right, color = color.new(color.orange, 45), style = line.style_dotted, width = 1)
+    array.push(tops, top)
+    array.push(bottoms, bottom)
+    array.push(bullish, false)
+    array.push(createdBars, bar_index)
+    array.push(boxes, b)
+    array.push(ceLines, ceLine)
+
+bool anyMitigated = false
+if barstate.isconfirmed
+    int i = array.size(tops) - 1
+    while i >= 0
+        float top = array.get(tops, i)
+        float bottom = array.get(bottoms, i)
+        float ce = (top + bottom) / 2.0
+        bool isBull = array.get(bullish, i)
+        int created = array.get(createdBars, i)
+        bool mitigated = false
+        if bar_index > created
+            if mitigationMode == "觸碰"
+                mitigated := isBull ? low <= top : high >= bottom
+            else if mitigationMode == "50%"
+                mitigated := isBull ? low <= ce : high >= ce
+            else
+                mitigated := isBull ? low <= bottom : high >= top
+        if mitigated
+            anyMitigated := true
+            box b = array.get(boxes, i)
+            line ceLine = array.get(ceLines, i)
+            if deleteMitigated
+                box.delete(b)
+                if not na(ceLine)
+                    line.delete(ceLine)
+            else
+                box.set_extend(b, extend.none)
+                box.set_right(b, bar_index)
+                box.set_bgcolor(b, color.new(color.gray, 92))
+                box.set_border_color(b, color.new(color.gray, 75))
+                if not na(ceLine)
+                    line.set_extend(ceLine, extend.none)
+                    line.set_x2(ceLine, bar_index)
+                    line.set_color(ceLine, color.new(color.gray, 70))
+            array.remove(tops, i)
+            array.remove(bottoms, i)
+            array.remove(bullish, i)
+            array.remove(createdBars, i)
+            array.remove(boxes, i)
+            array.remove(ceLines, i)
+        i -= 1
+
+while array.size(tops) > maxActive
+    box oldBox = array.shift(boxes)
+    line oldCe = array.shift(ceLines)
+    box.delete(oldBox)
+    if not na(oldCe)
+        line.delete(oldCe)
+    array.shift(tops)
+    array.shift(bottoms)
+    array.shift(bullish)
+    array.shift(createdBars)
+
+alertcondition(newBullFvg, title = "TG XAU 新多頭 FVG", message = "TG XAU：已確認新的多頭 FVG")
+alertcondition(newBearFvg, title = "TG XAU 新空頭 FVG", message = "TG XAU：已確認新的空頭 FVG")
+alertcondition(anyMitigated, title = "TG XAU FVG 已 Mitigation", message = "TG XAU：活動 FVG 已達設定的 Mitigation 條件")
