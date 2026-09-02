@@ -1,0 +1,51 @@
+//@version=6
+indicator("TG XAU 關鍵價位 v1", shorttitle = "TG XAU Key Levels", overlay = true)
+
+string GROUP_D = "日線價位"
+string GROUP_W = "週線價位"
+string GROUP_M = "月線價位"
+string GROUP_DISPLAY = "顯示"
+
+bool showDaily = input.bool(true, "顯示昨日高低 + 今日開盤", group = GROUP_D)
+bool showWeekly = input.bool(true, "顯示上週高低 + 本週開盤", group = GROUP_W)
+bool showMonthly = input.bool(true, "顯示上月高低 + 本月開盤", group = GROUP_M)
+bool showLegend = input.bool(true, "顯示縮寫說明", group = GROUP_DISPLAY)
+
+float pdh = request.security(syminfo.tickerid, "D", high[1], lookahead = barmerge.lookahead_on)
+float pdl = request.security(syminfo.tickerid, "D", low[1], lookahead = barmerge.lookahead_on)
+float dayOpen = request.security(syminfo.tickerid, "D", open, lookahead = barmerge.lookahead_on)
+float pwh = request.security(syminfo.tickerid, "W", high[1], lookahead = barmerge.lookahead_on)
+float pwl = request.security(syminfo.tickerid, "W", low[1], lookahead = barmerge.lookahead_on)
+float weekOpen = request.security(syminfo.tickerid, "W", open, lookahead = barmerge.lookahead_on)
+float pmh = request.security(syminfo.tickerid, "M", high[1], lookahead = barmerge.lookahead_on)
+float pml = request.security(syminfo.tickerid, "M", low[1], lookahead = barmerge.lookahead_on)
+float monthOpen = request.security(syminfo.tickerid, "M", open, lookahead = barmerge.lookahead_on)
+
+bool allowD = timeframe.isintraday
+bool allowW = timeframe.isintraday or timeframe.isdaily
+bool allowM = timeframe.isintraday or timeframe.isdaily or timeframe.isweekly
+
+plot(showDaily and allowD ? pdh : na, "PDH｜昨日高點", color = color.new(color.red, 15), linewidth = 1, style = plot.style_stepline)
+plot(showDaily and allowD ? pdl : na, "PDL｜昨日低點", color = color.new(color.lime, 20), linewidth = 1, style = plot.style_stepline)
+plot(showDaily and allowD ? dayOpen : na, "D Open｜今日開盤", color = color.new(color.silver, 25), linewidth = 1, style = plot.style_stepline)
+plot(showWeekly and allowW ? pwh : na, "PWH｜上週高點", color = color.new(color.red, 35), linewidth = 2, style = plot.style_stepline)
+plot(showWeekly and allowW ? pwl : na, "PWL｜上週低點", color = color.new(color.lime, 40), linewidth = 2, style = plot.style_stepline)
+plot(showWeekly and allowW ? weekOpen : na, "W Open｜本週開盤", color = color.new(color.yellow, 30), linewidth = 1, style = plot.style_stepline)
+plot(showMonthly and allowM ? pmh : na, "PMH｜上月高點", color = color.new(color.fuchsia, 25), linewidth = 2, style = plot.style_stepline)
+plot(showMonthly and allowM ? pml : na, "PML｜上月低點", color = color.new(color.aqua, 25), linewidth = 2, style = plot.style_stepline)
+plot(showMonthly and allowM ? monthOpen : na, "M Open｜本月開盤", color = color.new(color.orange, 20), linewidth = 2, style = plot.style_stepline)
+
+var table legend = table.new(position.bottom_right, 2, 4, border_width = 1, border_color = color.new(color.gray, 80))
+if barstate.islast
+    for row = 0 to 3
+        table.cell(legend, 0, row, "", bgcolor = color.new(color.black, 100))
+        table.cell(legend, 1, row, "", bgcolor = color.new(color.black, 100))
+    if showLegend
+        table.cell(legend, 0, 0, "關鍵價位", text_color = color.white, bgcolor = color.new(color.black, 20))
+        table.cell(legend, 1, 0, "已確認高低", text_color = color.silver, bgcolor = color.new(color.black, 20))
+        table.cell(legend, 0, 1, "PDH / PDL", text_color = color.silver)
+        table.cell(legend, 1, 1, "昨日高 / 低", text_color = color.white)
+        table.cell(legend, 0, 2, "PWH / PWL", text_color = color.silver)
+        table.cell(legend, 1, 2, "上週高 / 低", text_color = color.white)
+        table.cell(legend, 0, 3, "PMH / PML", text_color = color.silver)
+        table.cell(legend, 1, 3, "上月高 / 低", text_color = color.white)
