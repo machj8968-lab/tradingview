@@ -1,0 +1,198 @@
+//@version=6
+indicator("TG XAU 月線方向 v1", shorttitle = "TG XAU 月線方向", overlay = true, max_labels_count = 200)
+
+int BIAS_STRONG_BULL = 2
+int BIAS_BULL = 1
+int BIAS_NEUTRAL = 0
+int BIAS_BEAR = -1
+int BIAS_STRONG_BEAR = -2
+
+string GROUP_TREND = "趨勢"
+string GROUP_STRUCTURE = "市場結構"
+string GROUP_DMI = "DMI / ADX"
+string GROUP_DISPLAY = "顯示"
+
+int emaFastLength = input.int(20, "EMA 快線週期", minval = 1, group = GROUP_TREND)
+int emaSlowLength = input.int(50, "EMA 慢線週期", minval = 2, group = GROUP_TREND)
+int emaSlopeLookback = input.int(2, "EMA20 斜率回看 K 數", minval = 1, group = GROUP_TREND)
+int pivotLeft = input.int(2, "Pivot 左側確認 K 數", minval = 1, group = GROUP_STRUCTURE)
+int pivotRight = input.int(2, "Pivot 右側確認 K 數", minval = 1, group = GROUP_STRUCTURE)
+int atrLength = input.int(14, "ATR 週期", minval = 1, group = GROUP_STRUCTURE)
+float structureToleranceAtr = input.float(0.05, "相等高低點 ATR 容差倍數", minval = 0.0, step = 0.01, group = GROUP_STRUCTURE)
+int diLength = input.int(14, "DI 週期", minval = 1, group = GROUP_DMI)
+int adxSmoothing = input.int(14, "ADX 平滑週期", minval = 1, group = GROUP_DMI)
+float strongAdxThreshold = input.float(25.0, "強趨勢 ADX 門檻", minval = 1.0, step = 0.5, group = GROUP_DMI)
+bool showEma = input.bool(true, "顯示 EMA20 / EMA50", group = GROUP_DISPLAY)
+bool showDashboard = input.bool(true, "顯示方向面板", group = GROUP_DISPLAY)
+bool showDetails = input.bool(true, "顯示詳細資訊", group = GROUP_DISPLAY)
+bool showWrongTimeframeMessage = input.bool(true, "非月線時顯示提示", group = GROUP_DISPLAY)
+bool showStructureDebug = input.bool(false, "顯示市場結構除錯標記", group = GROUP_DISPLAY)
+bool showScoreDebug = input.bool(false, "顯示計分除錯資訊", group = GROUP_DISPLAY)
+int maxDebugLabels = input.int(100, "最多除錯標記數", minval = 10, maxval = 180, group = GROUP_DISPLAY)
+
+f_getEmaScore(float closeValue, float fastEma, float slowEma) =>
+    int score = 0
+    if closeValue > fastEma and fastEma > slowEma
+        score := 2
+    else if closeValue < fastEma and fastEma < slowEma
+        score := -2
+    score
+f_getSlopeScore(float fastEma, float fastEmaPast) => fastEma > fastEmaPast ? 1 : fastEma < fastEmaPast ? -1 : 0
+f_getStructureScore(int highState, int lowState) => highState == 1 and lowState == 1 ? 2 : highState == -1 and lowState == -1 ? -2 : 0
+f_getDmiScore(float plusDiValue, float minusDiValue) => plusDiValue > minusDiValue ? 1 : minusDiValue > plusDiValue ? -1 : 0
+f_getBias(int totalScore, float adxValue, float strongThreshold) =>
+    int bias = BIAS_NEUTRAL
+    if totalScore >= 5 and adxValue >= strongThreshold
+        bias := BIAS_STRONG_BULL
+    else if totalScore >= 2
+        bias := BIAS_BULL
+    else if totalScore <= -5 and adxValue >= strongThreshold
+        bias := BIAS_STRONG_BEAR
+    else if totalScore <= -2
+        bias := BIAS_BEAR
+    bias
+f_biasText(int bias) =>
+    switch bias
+        BIAS_STRONG_BULL => "強多"
+        BIAS_BULL => "多"
+        BIAS_NEUTRAL => "中性"
+        BIAS_BEAR => "空"
+        BIAS_STRONG_BEAR => "強空"
+        => "資料不足"
+f_biasColor(int bias) =>
+    switch bias
+        BIAS_STRONG_BULL => color.rgb(0, 96, 64)
+        BIAS_BULL => color.rgb(0, 150, 95)
+        BIAS_NEUTRAL => color.rgb(92, 99, 112)
+        BIAS_BEAR => color.rgb(196, 65, 65)
+        BIAS_STRONG_BEAR => color.rgb(128, 28, 38)
+        => color.rgb(60, 60, 60)
+f_scoreText(int score) => score > 0 ? "+" + str.tostring(score) : str.tostring(score)
+f_highStructureText(int state) => state == 1 ? "HH" : state == -1 ? "LH" : "EQH"
+f_lowStructureText(int state) => state == 1 ? "HL" : state == -1 ? "LL" : "EQL"
+f_structureTypeText(int highState, int lowState) => highState == 1 and lowState == 1 ? "多頭結構" : highState == -1 and lowState == -1 ? "空頭結構" : "混合結構"
+f_structureText(int highState, int lowState) => f_highStructureText(highState) + " / " + f_lowStructureText(lowState) + "｜" + f_structureTypeText(highState, lowState)
+f_emaText(int score) => score == 2 ? "偏多" : score == -2 ? "偏空" : "混合"
+f_slopeText(int score) => score == 1 ? "上升" : score == -1 ? "下降" : "走平"
+f_dmiText(int score) => score == 1 ? "偏多" : score == -1 ? "偏空" : "平衡"
+f_adxStrengthText(float adxValue, float strongThreshold) => adxValue >= strongThreshold ? "強" : adxValue >= 20.0 ? "發展中" : "弱"
+
+bool isTargetChart = timeframe.ismonthly and timeframe.multiplier == 1
+float emaFastRaw = ta.ema(close, emaFastLength)
+float emaSlowRaw = ta.ema(close, emaSlowLength)
+float atrValue = ta.atr(atrLength)
+[plusDiRaw, minusDiRaw, adxRaw] = ta.dmi(diLength, adxSmoothing)
+float pivotHighRaw = ta.pivothigh(high, pivotLeft, pivotRight)
+float pivotLowRaw = ta.pivotlow(low, pivotLeft, pivotRight)
+
+var float latestSwingHigh = na
+var float previousSwingHigh = na
+var float latestSwingLow = na
+var float previousSwingLow = na
+var int highStructureState = 0
+var int lowStructureState = 0
+var array<label> debugLabels = array.new<label>()
+
+if isTargetChart and barstate.isconfirmed and not na(pivotHighRaw)
+    float pivotAtrHigh = nz(atrValue[pivotRight], atrValue)
+    float highTolerance = nz(pivotAtrHigh, syminfo.mintick) * structureToleranceAtr
+    if na(latestSwingHigh)
+        latestSwingHigh := pivotHighRaw
+    else
+        previousSwingHigh := latestSwingHigh
+        float highDifference = pivotHighRaw - latestSwingHigh
+        highStructureState := math.abs(highDifference) <= highTolerance ? 0 : highDifference > 0 ? 1 : -1
+        latestSwingHigh := pivotHighRaw
+        if showStructureDebug
+            label highLabel = label.new(bar_index - pivotRight, pivotHighRaw, f_highStructureText(highStructureState), style = label.style_label_down, color = color.new(color.orange, 20), textcolor = color.white, size = size.tiny)
+            array.push(debugLabels, highLabel)
+            if array.size(debugLabels) > maxDebugLabels
+                label.delete(array.shift(debugLabels))
+
+if isTargetChart and barstate.isconfirmed and not na(pivotLowRaw)
+    float pivotAtrLow = nz(atrValue[pivotRight], atrValue)
+    float lowTolerance = nz(pivotAtrLow, syminfo.mintick) * structureToleranceAtr
+    if na(latestSwingLow)
+        latestSwingLow := pivotLowRaw
+    else
+        previousSwingLow := latestSwingLow
+        float lowDifference = pivotLowRaw - latestSwingLow
+        lowStructureState := math.abs(lowDifference) <= lowTolerance ? 0 : lowDifference > 0 ? 1 : -1
+        latestSwingLow := pivotLowRaw
+        if showStructureDebug
+            label lowLabel = label.new(bar_index - pivotRight, pivotLowRaw, f_lowStructureText(lowStructureState), style = label.style_label_up, color = color.new(color.aqua, 20), textcolor = color.white, size = size.tiny)
+            array.push(debugLabels, lowLabel)
+            if array.size(debugLabels) > maxDebugLabels
+                label.delete(array.shift(debugLabels))
+
+int emaScoreRaw = f_getEmaScore(close, emaFastRaw, emaSlowRaw)
+int slopeScoreRaw = not na(emaFastRaw[emaSlopeLookback]) ? f_getSlopeScore(emaFastRaw, emaFastRaw[emaSlopeLookback]) : 0
+int structureScoreRaw = f_getStructureScore(highStructureState, lowStructureState)
+int dmiScoreRaw = f_getDmiScore(plusDiRaw, minusDiRaw)
+int totalScoreRaw = emaScoreRaw + slopeScoreRaw + structureScoreRaw + dmiScoreRaw
+bool haveTwoHighs = not na(previousSwingHigh)
+bool haveTwoLows = not na(previousSwingLow)
+bool emaHistoryReady = bar_index >= emaSlowLength - 1 and not na(emaFastRaw[emaSlopeLookback])
+bool dataReadyRaw = isTargetChart and emaHistoryReady and not na(adxRaw) and haveTwoHighs and haveTwoLows
+int candidateBiasRaw = dataReadyRaw ? f_getBias(totalScoreRaw, adxRaw, strongAdxThreshold) : na
+
+int confirmedBias = isTargetChart ? (barstate.isconfirmed ? candidateBiasRaw : candidateBiasRaw[1]) : na
+bool confirmedDataReady = isTargetChart and (barstate.isconfirmed ? dataReadyRaw : dataReadyRaw[1])
+int confirmedEmaScore = barstate.isconfirmed ? emaScoreRaw : emaScoreRaw[1]
+int confirmedSlopeScore = barstate.isconfirmed ? slopeScoreRaw : slopeScoreRaw[1]
+int confirmedStructureScore = barstate.isconfirmed ? structureScoreRaw : structureScoreRaw[1]
+int confirmedDmiScore = barstate.isconfirmed ? dmiScoreRaw : dmiScoreRaw[1]
+int confirmedTotalScore = barstate.isconfirmed ? totalScoreRaw : totalScoreRaw[1]
+int confirmedHighStructure = barstate.isconfirmed ? highStructureState : highStructureState[1]
+int confirmedLowStructure = barstate.isconfirmed ? lowStructureState : lowStructureState[1]
+float confirmedAdx = barstate.isconfirmed ? adxRaw : adxRaw[1]
+float confirmedEmaFast = barstate.isconfirmed ? emaFastRaw : emaFastRaw[1]
+float confirmedEmaSlow = barstate.isconfirmed ? emaSlowRaw : emaSlowRaw[1]
+
+plot(isTargetChart and showEma ? confirmedEmaFast : na, title = "EMA 快線", color = color.new(color.teal, 0), linewidth = 2)
+plot(isTargetChart and showEma ? confirmedEmaSlow : na, title = "EMA 慢線", color = color.new(color.orange, 0), linewidth = 2)
+
+var table dashboard = table.new(position.top_right, 2, 10, frame_color = color.new(color.gray, 50), frame_width = 1, border_color = color.new(color.gray, 70), border_width = 1)
+if barstate.islast
+    for row = 0 to 9
+        table.cell(dashboard, 0, row, "", bgcolor = color.new(color.black, 100))
+        table.cell(dashboard, 1, row, "", bgcolor = color.new(color.black, 100))
+    if not isTargetChart
+        if showWrongTimeframeMessage
+            table.cell(dashboard, 0, 0, "TG XAU 月線方向", text_color = color.white, bgcolor = color.new(color.black, 15))
+            table.cell(dashboard, 0, 1, "僅限月線使用", text_color = color.silver, bgcolor = color.new(color.black, 15))
+            table.cell(dashboard, 1, 1, "請切換 1M", text_color = color.silver, bgcolor = color.new(color.black, 15))
+    else if showDashboard
+        table.cell(dashboard, 0, 0, "XAU 月線方向", text_color = color.white, bgcolor = color.new(color.black, 10))
+        table.cell(dashboard, 1, 0, "已確認", text_color = color.silver, bgcolor = color.new(color.black, 10))
+        if not confirmedDataReady or na(confirmedBias)
+            table.cell(dashboard, 0, 1, "方向", text_color = color.silver)
+            table.cell(dashboard, 1, 1, "資料不足", text_color = color.white, bgcolor = color.new(color.gray, 35))
+        else
+            table.cell(dashboard, 0, 1, "方向", text_color = color.silver)
+            table.cell(dashboard, 1, 1, f_biasText(confirmedBias), text_color = color.white, bgcolor = f_biasColor(confirmedBias))
+            if showDetails
+                table.cell(dashboard, 0, 2, "總分", text_color = color.silver)
+                table.cell(dashboard, 1, 2, f_scoreText(confirmedTotalScore), text_color = color.white)
+                table.cell(dashboard, 0, 3, "市場結構", text_color = color.silver)
+                table.cell(dashboard, 1, 3, f_structureText(confirmedHighStructure, confirmedLowStructure), text_color = color.white)
+                table.cell(dashboard, 0, 4, "均線結構", text_color = color.silver)
+                table.cell(dashboard, 1, 4, f_emaText(confirmedEmaScore), text_color = color.white)
+                table.cell(dashboard, 0, 5, "EMA20 斜率", text_color = color.silver)
+                table.cell(dashboard, 1, 5, f_slopeText(confirmedSlopeScore), text_color = color.white)
+                table.cell(dashboard, 0, 6, "DMI 方向", text_color = color.silver)
+                table.cell(dashboard, 1, 6, f_dmiText(confirmedDmiScore), text_color = color.white)
+                table.cell(dashboard, 0, 7, "ADX 強度", text_color = color.silver)
+                table.cell(dashboard, 1, 7, str.tostring(confirmedAdx, "#.0") + "｜" + f_adxStrengthText(confirmedAdx, strongAdxThreshold), text_color = color.white)
+                if showScoreDebug
+                    table.cell(dashboard, 0, 8, "分項", text_color = color.silver)
+                    table.cell(dashboard, 1, 8, "均線 " + f_scoreText(confirmedEmaScore) + "｜斜率 " + f_scoreText(confirmedSlopeScore), text_color = color.white)
+                    table.cell(dashboard, 1, 9, "結構 " + f_scoreText(confirmedStructureScore) + "｜DMI " + f_scoreText(confirmedDmiScore), text_color = color.white)
+
+bool biasChanged = isTargetChart and barstate.isconfirmed and confirmedDataReady and not na(confirmedBias) and not na(confirmedBias[1]) and confirmedBias != confirmedBias[1]
+alertcondition(biasChanged and confirmedBias == BIAS_STRONG_BULL, title = "TG XAU 月線方向 → 強多", message = "TG XAU 月線方向已確認：強多")
+alertcondition(biasChanged and confirmedBias == BIAS_BULL, title = "TG XAU 月線方向 → 多", message = "TG XAU 月線方向已確認：多")
+alertcondition(biasChanged and confirmedBias == BIAS_NEUTRAL, title = "TG XAU 月線方向 → 中性", message = "TG XAU 月線方向已確認：中性")
+alertcondition(biasChanged and confirmedBias == BIAS_BEAR, title = "TG XAU 月線方向 → 空", message = "TG XAU 月線方向已確認：空")
+alertcondition(biasChanged and confirmedBias == BIAS_STRONG_BEAR, title = "TG XAU 月線方向 → 強空", message = "TG XAU 月線方向已確認：強空")
+alertcondition(biasChanged, title = "TG XAU 月線方向 → 任一方向變化", message = "TG XAU 月線已確認方向發生變化")
